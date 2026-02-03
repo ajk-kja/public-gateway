@@ -1,0 +1,173 @@
+# Public Gateway Stack
+# Isolated Docker Compose for public-facing web applications
+# Separate from the VPS private AI services stack
+
+volumes:
+  caddy-data:
+  caddy-config:
+  cigarspot-data:
+
+networks:
+  public-gateway:
+    name: public-gateway
+    driver: bridge
+
+services:
+  # ============================================
+  # Caddy Reverse Proxy (Port 8880 for Cloudflare)
+  # ============================================
+  caddy:
+    container_name: public-caddy
+    image: docker.io/library/caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      # HTTP for Cloudflare Tunnel ingress
+      - "0.0.0.0:8880:80/tcp"
+    expose:
+      - 80/tcp
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data:rw
+      - caddy-config:/config:rw
+    environment:
+      - LETSENCRYPT_EMAIL=internal
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "1m"
+        max-file: "1"
+    networks:
+      - public-gateway
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.25'
+        reservations:
+          memory: 64M
+          cpus: '0.1'
+
+  # ============================================
+  # Cloudflare Tunnel (connects to Cloudflare Edge)
+  # ============================================
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: public-cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - caddy
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "1m"
+        max-file: "2"
+    networks:
+      - public-gateway
+
+  # ============================================
+  # CD Player (Vinyl Visualizer)
+  # ============================================
+  cd-player:
+    image: cd-player:latest
+    container_name: cd-player
+    build:
+      context: ../cd_player
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    expose:
+      - 80/tcp
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+    volumes:
+      - ../cd_player/dist:/usr/share/nginx/html:ro
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+    networks:
+      - public-gateway
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.25'
+        reservations:
+          memory: 32M
+          cpus: '0.05'
+
+  # ============================================
+  # Be Mine (Valentine's Meme Site)
+  # ============================================
+  be-mine:
+    image: be-mine:latest
+    container_name: be-mine
+    build:
+      context: ../be-mine
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    expose:
+      - 80/tcp
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+    volumes:
+      - ../be-mine/dist:/usr/share/nginx/html:ro
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+    networks:
+      - public-gateway
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.25'
+        reservations:
+          memory: 32M
+          cpus: '0.05'
+
+  # ============================================
+  # Cigarspot (Cigar Inventory App)
+  # ============================================
+  cigarspot:
+    image: cigarspot:latest
+    container_name: cigarspot
+    build:
+      context: ../cigarspot
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    expose:
+      - 8000/tcp
+    volumes:
+      - cigarspot-data:/data
+    environment:
+      - TZ=UTC
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - public-gateway
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+        reservations:
+          memory: 64M
+          cpus: '0.1'

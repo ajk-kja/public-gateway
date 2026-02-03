@@ -1,0 +1,39 @@
+# Public Gateway Caddyfile
+# Simple reverse proxy for public web applications
+# No authentication required - these are public sites
+
+{
+    email {$LETSENCRYPT_EMAIL:internal}
+    auto_https disable_redirects
+}
+
+# ============================================
+# Port 80 Handler for Cloudflare Tunnel
+# ============================================
+# Routes traffic from cloudflared to backends based on Host header
+# All routes here are public - no authentication
+
+:80 {
+    # CD Player - Vinyl Visualizer
+    @cd host cd.ilgailu.com
+    handle @cd {
+        reverse_proxy cd-player:80
+    }
+
+    # Cigarspot - Cigar Inventory
+    @cigarspot host cigarspot.ilgailu.com
+    handle @cigarspot {
+        reverse_proxy cigarspot:8000
+    }
+
+    # Be Mine - Valentine's Site (kiki.ilgailu.com)
+    @kiki host kiki.ilgailu.com
+    handle @kiki {
+        reverse_proxy be-mine:80
+    }
+
+    # Default: return 404 for unknown hosts
+    handle {
+        respond "Unknown host" 404
+    }
+}
