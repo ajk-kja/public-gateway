@@ -1,116 +1,116 @@
 # Public Gateway
 
-Isolated Docker Compose stack for public-facing web applications. This stack integrates with the VPS Caddy reverse proxy for Cloudflare Tunnel access.
+A Docker Compose stack for hosting public-facing static sites on a VPS while keeping private authenticated applications isolated.
+
+## Why Use This?
+
+If you run both **public static sites** and **private authenticated applications** (behind Cloudflare Zero Trust, Tailscale, etc.) on the same VPS, you may want to:
+
+- Keep public and private services on separate Docker networks
+- Route public traffic through a dedicated nginx proxy with minimal attack surface
+- Avoid exposing ports directly to the internet
+- Integrate with Cloudflare Tunnel for SSL and DDoS protection
+
+This stack provides that separation layer.
 
 ## Architecture
 
 ```
-Internet → Cloudflare Edge → cloudflared (VPS) → Caddy:80 → public-nginx:8585 → Containers
-                                                    ↓
-                          (ai/flowise/litellm/nextcloud handled directly by Caddy)
+Internet → Cloudflare Edge → cloudflared (VPS) → Main Reverse Proxy → public-nginx → App Containers
+                                                        ↓
+                                     (private apps handled directly by main proxy)
 ```
 
 **How it works:**
-1. The VPS `cloudflared` container (in `~/vps` stack) handles the Cloudflare Tunnel
-2. VPS Caddy receives requests on port 80 and routes based on Host header
-3. Requests for `cd/cigarspot/kiki.ilgailu.com` are proxied to `public-nginx:8585`
-4. Public-nginx routes to the appropriate app container
+1. A `cloudflared` container handles the Cloudflare Tunnel connection
+2. Your main reverse proxy (e.g., Caddy) routes traffic based on Host header
+3. Public domains are proxied to `public-nginx:8585`
+4. `public-nginx` routes to isolated app containers
 
-**Network Integration:**
-- `public-nginx` joins both `public-gateway` and `localai_default` networks
-- This allows VPS Caddy to reach nginx while keeping app containers isolated
+**Network Isolation:**
+- App containers run on an isolated `public-gateway` network
+- `public-nginx` bridges to your main proxy's network for routing
+- Public apps cannot access private services directly
 
-## Services
+## Quick Start
 
-| Service | Domain | Description |
-|---------|--------|-------------|
-| cd-player | cd.ilgailu.com | Vinyl record visualizer |
-| cigarspot | cigarspot.ilgailu.com | Cigar inventory app |
-| be-mine | kiki.ilgailu.com | Valentine's meme site |
+### Prerequisites
 
-## Prerequisites
+- Docker and Docker Compose
+- An existing reverse proxy (Caddy, Nginx, Traefik) with Cloudflare Tunnel
+- A network your main proxy uses (e.g., `localai_default`)
 
-The VPS stack (`~/vps`) must be running with:
-- `caddy` container on `localai_default` network
-- `cloudflared` container connected to Cloudflare Tunnel
-- Caddyfile configured with routes for public-gateway domains
+### Setup
+
+1. Clone this repository:
+   ```bash
+   git clone https://github.com/ajk-kja/public-gateway.git
+   cd public-gateway
+   ```
+
+2. Copy environment template:
+   ```bash
+   cp .env.example .env
+   ```
+
+3. Update `docker-compose.yml`:
+   - Replace the external network name with yours
+   - Modify service definitions for your apps
+
+4. Update `nginx.conf`:
+   - Add server blocks for each public domain
+   - Point to your app containers
+
+5. Add routes to your main reverse proxy (example for Caddy):
+   ```caddy
+   @myapp host myapp.example.com
+   handle @myapp {
+       reverse_proxy public-nginx:8585
+   }
+   ```
+
+6. Start the stack:
+   ```bash
+   docker compose up -d
+   ```
+
+## Adding New Apps
+
+1. Add service definition to `docker-compose.yml` (on `public-gateway` network)
+2. Add server block to `nginx.conf` (listening on port 8585)
+3. Add route to your main reverse proxy
+4. Reload proxies:
+   ```bash
+   docker compose restart nginx
+   # Reload your main proxy as well
+   ```
+5. Configure DNS (CNAME pointing to your Cloudflare Tunnel)
 
 ## Commands
 
-### Start services
 ```bash
-cd ~/public-gateway
+# Start services
 docker compose up -d
-```
 
-### Stop services
-```bash
+# Stop services
 docker compose down
-```
 
-### View logs
-```bash
-docker logs cd-player
-docker logs cigarspot
-docker logs be-mine
+# View logs
 docker logs public-nginx
-```
+docker logs <app-container-name>
 
-### Rebuild after code changes
-```bash
+# Rebuild after code changes
 docker compose build --no-cache
 docker compose up -d
 ```
 
-### Test via Tailscale (simulating Cloudflare)
-```bash
-# Test through VPS Caddy (port 80)
-curl -H "Host: cd.ilgailu.com" -H "CF-Ray: test" http://100.123.123.5:80
-curl -H "Host: cigarspot.ilgailu.com" -H "CF-Ray: test" http://100.123.123.5:80
-curl -H "Host: kiki.ilgailu.com" -H "CF-Ray: test" http://100.123.123.5:80
-```
+## Security Considerations
 
-### Test via Cloudflare (public)
-```bash
-curl https://cd.ilgailu.com
-curl https://cigarspot.ilgailu.com
-curl https://kiki.ilgailu.com
-```
-
-## Adding a New Public App
-
-1. Add service definition to `docker-compose.yml` (on `public-gateway` network)
-2. Add server block to `nginx.conf` (listening on port 8585)
-3. Add route to VPS `Caddyfile` in the `:80` block:
-   ```caddy
-   @newapp host newapp.ilgailu.com
-   handle @newapp {
-       import cloudflare_or_tailscale
-       reverse_proxy public-nginx:8585
-   }
-   ```
-4. Reload Caddy: `docker exec caddy caddy reload --config /etc/caddy/Caddyfile`
-5. Configure Cloudflare DNS CNAME pointing to tunnel
-
-## Security Notes
-
-- Apps are only accessible via Cloudflare Tunnel or Tailscale (enforced by Caddy)
-- No direct port exposure to public internet
-- Static or self-contained apps only (no shared databases with VPS stack)
-- Separate Docker network from VPS AI services
-- Minimal resource allocations per container
-
-## Cloudflare DNS Configuration
-
-In Cloudflare DNS dashboard, add CNAME records pointing to your tunnel:
-
-| Name | Type | Target |
-|------|------|--------|
-| cd | CNAME | `<tunnel-id>.cfargotunnel.com` |
-| cigarspot | CNAME | `<tunnel-id>.cfargotunnel.com` |
-| kiki | CNAME | `<tunnel-id>.cfargotunnel.com` |
-
-The VPS cloudflared tunnel routes all `*.ilgailu.com` traffic to Caddy:80, which then routes based on Host header.
+- **Network isolation**: Apps cannot reach private services
+- **No direct port exposure**: Traffic flows only through Cloudflare Tunnel
+- **Minimal images**: Use `nginx:alpine` or similar lightweight bases
+- **Resource limits**: Configure memory and CPU limits per container
+- **Health checks**: All containers should have health checks configured
 
 ## File Structure
 
@@ -118,8 +118,49 @@ The VPS cloudflared tunnel routes all `*.ilgailu.com` traffic to Caddy:80, which
 public-gateway/
 ├── docker-compose.yml    # Service definitions
 ├── nginx.conf            # Nginx reverse proxy config (port 8585)
-├── README.md             # This file
-└── .gitignore            # Git ignore patterns
+├── .env.example          # Environment template
+├── .gitignore            # Git ignore patterns
+└── README.md             # This file
 ```
 
-App source code is in sibling directories (`../cd_player`, `../cigarspot`, `../be-mine`).
+## Example Service Definition
+
+```yaml
+services:
+  my-app:
+    build:
+      context: ../my-app
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    expose:
+      - 80/tcp
+    networks:
+      - public-gateway
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.25'
+```
+
+## Example Nginx Server Block
+
+```nginx
+server {
+    listen 8585;
+    server_name myapp.example.com;
+
+    location / {
+        proxy_pass http://my-app:80;
+    }
+
+    location /health {
+        access_log off;
+        proxy_pass http://my-app:80/health;
+    }
+}
+```
+
+## License
+
+MIT

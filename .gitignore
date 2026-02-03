@@ -1,6 +1,9 @@
 # Environment files with secrets
 .env
 
+# Local VPS-specific documentation
+VPS_CONTEXT.md
+
 # Logs
 *.log
 
